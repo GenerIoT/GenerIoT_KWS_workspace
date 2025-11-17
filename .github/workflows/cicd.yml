@@ -3,6 +3,7 @@ name: CI/CD
 
 on:
   push:
+    branches: [ ci/setup-cicd]
   pull_request:
 
 permissions: 
