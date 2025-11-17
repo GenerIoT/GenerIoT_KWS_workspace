@@ -52,7 +52,7 @@ jobs:
       run: |
         cd ~/esp/esp-idf
         . ./export.sh
-        cd $GITHUB_WORKSPACE
+        cd $GITHUB_WORKSPACE/target_sw/app/micro_kws_esp32devboard_perf
         # Force full clean to ensure sdkconfig.defaults is used
         idf.py fullclean
         # Set target to ESP32-C3 (RISC-V)
@@ -68,4 +68,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: esp32-firmware
-        path: build/app.bin
+        path: target_sw/app/micro_kws_esp32devboard_perf/build/app.bin
