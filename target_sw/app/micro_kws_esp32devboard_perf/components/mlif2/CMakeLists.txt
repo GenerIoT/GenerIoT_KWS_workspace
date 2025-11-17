@@ -24,33 +24,44 @@ SET(MLONMCU_BACKEND ${CONFIG_MLONMCU_BACKEND})
 
 SET(MLIF_SRCS ml_interface.c)
 SET(CODEGEN_INCS ${MLONMCU_CODEGEN_DIR})
+SET(CODEGEN_SRCS "")
+
 IF("${MLONMCU_FRAMEWORK}" STREQUAL "tflm")
     SET(LIB_NAME tflite-lib)
     LIST(APPEND MLIF_SRCS ml_interface_tflm.cc)
-    FILE(GLOB CODEGEN_SRCS
-        ${MLONMCU_CODEGEN_DIR}/*.cc
-        ${MLONMCU_CODEGEN_DIR}/*.c
-    )
+    # Only add codegen sources if CODEGEN_DIR is specified
+    IF(NOT "${MLONMCU_CODEGEN_DIR}" STREQUAL "")
+        FILE(GLOB CODEGEN_SRCS
+            ${MLONMCU_CODEGEN_DIR}/*.cc
+            ${MLONMCU_CODEGEN_DIR}/*.c
+        )
+    ENDIF()
 
 ELSEIF("${MLONMCU_FRAMEWORK}" STREQUAL "tvm")
     SET(LIB_NAME tvm-lib)
     LIST(APPEND MLIF_SRCS ml_interface_tvm.c)
-    FILE(GLOB CODEGEN_SRCS
-        ${MLONMCU_CODEGEN_DIR}/codegen/host/src/*.c
-        ${MLONMCU_CODEGEN_DIR}/codegen/host/src/*.cc
-    )
-    IF(EXISTS ${MLONMCU_CODEGEN_DIR}/codegen/host/include/)
-        LIST(APPEND CODEGEN_INCS ${MLONMCU_CODEGEN_DIR}/codegen/host/include/)
-    ENDIF()
+    # Model component provides the codegen files, so we don't need to add them here
+    # Only add if CODEGEN_DIR is explicitly specified (backward compatibility)
+    IF(NOT "${MLONMCU_CODEGEN_DIR}" STREQUAL "")
+        FILE(GLOB CODEGEN_SRCS_TMP
+            ${MLONMCU_CODEGEN_DIR}/codegen/host/src/*.c
+            ${MLONMCU_CODEGEN_DIR}/codegen/host/src/*.cc
+        )
+        LIST(APPEND CODEGEN_SRCS ${CODEGEN_SRCS_TMP})
+        
+        IF(EXISTS ${MLONMCU_CODEGEN_DIR}/codegen/host/include/)
+            LIST(APPEND CODEGEN_INCS ${MLONMCU_CODEGEN_DIR}/codegen/host/include/)
+        ENDIF()
 
-    IF ("${MLONMCU_BACKEND}" STREQUAL "tvmaot")
-        LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/aot_wrapper.c)
-    ELSEIF ("${MLONMCU_BACKEND}" STREQUAL "tvmrt")
-        LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/rt_wrapper.c)
-    ELSEIF ("${MLONMCU_BACKEND}" STREQUAL "tvmcg")
-        LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/staticrt.c)
-    ELSE()
-        MESSAGE(WARNING "Invalid Backend: ${MLONMCU_BACKEND}")
+        IF ("${MLONMCU_BACKEND}" STREQUAL "tvmaot")
+            LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/aot_wrapper.c)
+        ELSEIF ("${MLONMCU_BACKEND}" STREQUAL "tvmrt")
+            LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/rt_wrapper.c)
+        ELSEIF ("${MLONMCU_BACKEND}" STREQUAL "tvmcg")
+            LIST(APPEND CODEGEN_SRCS ${MLONMCU_CODEGEN_DIR}/staticrt.c)
+        ELSE()
+            MESSAGE(WARNING "Invalid Backend: ${MLONMCU_BACKEND}")
+        ENDIF()
     ENDIF()
 ELSE()
     MESSAGE(WARNING "Invalid Framework: ${MLONMCU_FRAMEWORK}")
@@ -73,7 +84,7 @@ ENDIF()
 
 idf_component_register(SRCS ${CODEGEN_SRCS} ${MLIF_SRCS}
                     INCLUDE_DIRS ${CODEGEN_INCS} ${CMAKE_CURRENT_SOURCE_DIR}/include
-                    REQUIRES ${LIB_NAME})
+                    REQUIRES ${LIB_NAME} model)
 
 component_compile_options(-Wno-error=missing-braces -Wno-incompatible-pointer-types -Wno-error=unused-const-variable)
 
