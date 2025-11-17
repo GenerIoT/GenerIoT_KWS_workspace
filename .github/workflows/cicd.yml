@@ -48,24 +48,4 @@ jobs:
         ./install.sh all
         echo "ESP-IDF installation complete"
 
-    - name: Build Firmware
-      run: |
-        cd ~/esp/esp-idf
-        . ./export.sh
-        cd $GITHUB_WORKSPACE
-        # Force full clean to ensure sdkconfig.defaults is used
-        idf.py fullclean
-        # Set target to ESP32-C3 (RISC-V)
-        idf.py set-target esp32c3
-        # Verify the config was set correctly
-        echo "Checking MLONMCU_FRAMEWORK setting:"
-        grep "CONFIG_MLONMCU_FRAMEWORK" sdkconfig || echo "Not found in sdkconfig"
-        grep "CONFIG_MLONMCU_FRAMEWORK" sdkconfig.defaults || echo "Not found in defaults"
-        # Build with fresh config
-        idf.py build
 
-    - name: Upload firmware as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: esp32-firmware
-        path: build/app.bin
