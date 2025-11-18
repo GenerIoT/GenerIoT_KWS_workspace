@@ -21,6 +21,11 @@ cmake_minimum_required(VERSION 3.5)
 SET(TVM_SRC ${CONFIG_TVM_DIR})
 SET(TVM_CRT_CONFIG_DIR ${CONFIG_TVM_CRT_CONFIG_DIR})
 
+# If TVM_SRC is not configured, use the bundled runtime
+IF ("${TVM_SRC}" STREQUAL "" OR "${TVM_SRC}" STREQUAL "$(TVM_SRC)")
+    SET(TVM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/runtime)
+ENDIF()
+
 IF (NOT ${TVM_SRC} STREQUAL "")
 
 SET(TVM_ALIGNMENT_BYTES 4)
@@ -28,29 +33,39 @@ SET(TVM_ALIGNMENT_BYTES 4)
 # cmake-format: off
 SET(TVM_HEADERS
     ${TVM_SRC}/include
-    ${TVM_SRC}/3rdparty/dlpack/include
-    ${TVM_SRC}/apps/bundle_deploy
-    ${TVM_SRC}/src/runtime/crt/include
 )
+
+IF(EXISTS "${TVM_SRC}/3rdparty/dlpack/include")
+    LIST(APPEND TVM_HEADERS 
+        ${TVM_SRC}/3rdparty/dlpack/include
+        ${TVM_SRC}/apps/bundle_deploy
+        ${TVM_SRC}/src/runtime/crt/include
+    )
+    SET(TVM_CRT_PATH "${TVM_SRC}/src/runtime/crt")
+ELSE()
+    SET(TVM_CRT_PATH "${TVM_SRC}/src/runtime/crt")
+ENDIF()
 # cmake-format: on
 
-IF(TVM_CRT_CONFIG_DIR)
+# Add crt_config directory
+IF(TVM_CRT_CONFIG_DIR AND NOT "${TVM_CRT_CONFIG_DIR}" STREQUAL "")
     LIST(APPEND TVM_HEADERS ${TVM_CRT_CONFIG_DIR})
-# ELSE()
-#     LIST(APPEND TVM_HEADERS ${TVM_SRC}/apps/bundle_deploy/crt_config)
+ELSE()
+    # Use bundled crt_config
+    LIST(APPEND TVM_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/crt_config)
 ENDIF()
 
     idf_component_register(
             SRCS
-                ${TVM_SRC}/src/runtime/crt/common/crt_backend_api.c
-                ${TVM_SRC}/src/runtime/crt/memory/stack_allocator.c
-                ${TVM_SRC}/src/runtime/crt/common/crt_runtime_api.c
-                ${TVM_SRC}/src/runtime/crt/common/func_registry.c
-                ${TVM_SRC}/src/runtime/crt/memory/page_allocator.c
-                ${TVM_SRC}/src/runtime/crt/common/ndarray.c
-                ${TVM_SRC}/src/runtime/crt/common/packed_func.c
-                ${TVM_SRC}/src/runtime/crt/graph_executor/graph_executor.c
-                ${TVM_SRC}/src/runtime/crt/graph_executor/load_json.c
+                ${TVM_CRT_PATH}/common/crt_backend_api.c
+                ${TVM_CRT_PATH}/memory/stack_allocator.c
+                ${TVM_CRT_PATH}/common/crt_runtime_api.c
+                ${TVM_CRT_PATH}/common/func_registry.c
+                ${TVM_CRT_PATH}/memory/page_allocator.c
+                ${TVM_CRT_PATH}/common/ndarray.c
+                ${TVM_CRT_PATH}/common/packed_func.c
+                ${TVM_CRT_PATH}/graph_executor/graph_executor.c
+                ${TVM_CRT_PATH}/graph_executor/load_json.c
             INCLUDE_DIRS
                 ${TVM_HEADERS}
     )
