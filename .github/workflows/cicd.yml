@@ -20,6 +20,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        submodules: recursive
 
     - name: Cache ESP-IDF Installation
       id: cache-esp-idf
@@ -55,12 +56,7 @@ jobs:
         cd $GITHUB_WORKSPACE/target_sw/app/micro_kws_esp32devboard_perf
         # Force full clean to ensure sdkconfig.defaults is used
         idf.py fullclean
-        # Set target to ESP32-C3 (RISC-V)
         idf.py set-target esp32c3
-        # Verify the config was set correctly
-        echo "Checking MLONMCU_FRAMEWORK setting:"
-        grep "CONFIG_MLONMCU_FRAMEWORK" sdkconfig || echo "Not found in sdkconfig"
-        grep "CONFIG_MLONMCU_FRAMEWORK" sdkconfig.defaults || echo "Not found in defaults"
         # Build with fresh config
         idf.py build
 
@@ -69,3 +65,56 @@ jobs:
       with:
         name: esp32-firmware
         path: target_sw/app/micro_kws_esp32devboard_perf/build/app.bin
+
+  bump-version: 
+    runs-on: ubuntu-latest
+    needs: build-firmware
+    outputs: 
+      version: ${{ steps.set-version.outputs.version }}
+    steps: 
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with: 
+        fetch-depth: 0
+
+    - name: Bump patch version
+      id: set-version
+      run: |
+        apt-get update && apt-get install -y jq
+
+        MAJOR=$(jq -r '.major' version.json)
+        MINOR=$(jq -r '.minor' version.json)
+        PATCH=$(jq -r '.patch' version.json)
+    
+        PATCH=$((PATCH+1))
+    
+        # Handle rollover: patch -> minor -> major
+        if [ "$PATCH" -gt 10 ]; then
+          PATCH=0
+          MINOR=$((MINOR+1))
+        fi
+    
+        if [ "$MINOR" -gt 10 ]; then
+          MINOR=0
+          MAJOR=$((MAJOR+1))
+        fi
+    
+        # Write back into version.json
+        jq \
+          --argjson major $MAJOR \
+          --argjson minor $MINOR \
+          --argjson patch $PATCH \
+          '{major:$major, minor:$minor, patch:$patch}' \
+          version.json > version.tmp && mv version.tmp version.json
+    
+        # Export version string
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Commit updated version.json
+      run: |
+        git config user.name "Hai Chu"
+        git config user.email "hai.m.chu@tuni.fi"
+        git add version.json
+        git commit -m "Bump version to ${{ steps.set-version.outputs.version }} [skip ci]"
+        git push
