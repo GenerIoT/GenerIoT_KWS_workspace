@@ -52,7 +52,17 @@ jobs:
           cmake \
           libzstd-dev
     
+    - name: Cache Python virtualenv with dependencies
+      id: cache-venv
+      uses: actions/cache@v4
+      with:
+        path: mlonmcu/venv
+        key: venv-${{ runner.os }}-v2-${{ hashFiles('mlonmcu/setup.py', 'mlonmcu/requirements*.txt') }}
+        restore-keys: |
+          venv-${{ runner.os }}-v2-
+    
     - name: Create MLonMCU virtualenv
+      if: steps.cache-venv.outputs.cache-hit != 'true'
       working-directory: mlonmcu
       shell: bash
       run: |
@@ -60,6 +70,14 @@ jobs:
         python3 -m venv venv
         source venv/bin/activate
         pip install -e .
+        echo "Venv created with all dependencies"
+    
+    - name: Reinstall mlonmcu package in editable mode (fixes paths after cache)
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        source venv/bin/activate
+        pip install -e . --no-deps
     
     - name: Cache MLonMCU workspace
       id: cache-mlonmcu
