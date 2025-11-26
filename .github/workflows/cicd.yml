@@ -133,4 +133,24 @@ jobs:
         python3 -m mlonmcu.cli.main setup -v --progress -c cmake.use_system=true
         
         echo "Setup completed successfully!"
+
+    - name: Run KWS Model Simulation
+      shell: bash
+      run: |
+        source $GITHUB_WORKSPACE/mlonmcu/venv/bin/activate
+        cd /tmp
+        echo "Testing mlonmcu import:"
+        python3 -c "import mlonmcu; print(f'mlonmcu: {mlonmcu.__file__}')"
+        python3 -c "import mlonmcu.setup.gen_requirements; print('OK')"
+        python3 $GITHUB_WORKSPACE/run.py kws_1 --print simulate --core_model esp32c3
+    
+    - name: Upload simulation results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: simulation-results
+        path: |
+          mlonmcu/workspace_kws/temp/sessions/latest/report.csv
+          mlonmcu/workspace_kws/temp/sessions/latest/*.log
+        retention-days: 7
     
