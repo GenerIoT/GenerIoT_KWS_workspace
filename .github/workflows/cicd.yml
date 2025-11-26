@@ -78,6 +78,16 @@ jobs:
       run: |
         source venv/bin/activate
         pip install -e . --no-deps
+        echo "Verifying critical dependencies:"
+        python3 -c "import mlonmcu; print(f'✓ mlonmcu: {mlonmcu.__file__}')" || {
+          echo "ERROR: mlonmcu import failed, reinstalling..."
+          pip install -e .
+        }
+        python3 -c "import tensorflow; print(f'✓ tensorflow: {tensorflow.__version__}')" || {
+          echo "WARNING: tensorflow missing, installing all dependencies..."
+          pip install -e .
+        }
+        python3 -c "import mlonmcu.setup.gen_requirements; print('✓ mlonmcu.setup accessible')"
     
     - name: Cache MLonMCU workspace
       id: cache-mlonmcu
