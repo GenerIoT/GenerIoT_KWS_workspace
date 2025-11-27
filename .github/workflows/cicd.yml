@@ -156,8 +156,8 @@ jobs:
       run: |
         source $GITHUB_WORKSPACE/mlonmcu/venv/bin/activate
         cd /tmp
-        # Build firmware but stop before RUN stage (which attempts to flash)
-        python3 -m mlonmcu.cli.main flow run $GITHUB_WORKSPACE/target_sw/kws/kws_1/micro_kws_student_quantized.tflite \
+        # Build firmware but stop at COMPILE stage (before RUN which attempts to flash)
+        python3 -m mlonmcu.cli.main flow compile $GITHUB_WORKSPACE/target_sw/kws/kws_1/micro_kws_student_quantized.tflite \
           --target esp32c3 --platform espidf \
           -c espidf.print_outputs=1 -c esp32c3.print_outputs=1 -c run.export_optional=1 \
           --backend tvmaotplus -c tvmaotplus.desired_layout=NCHW -c tvmaot.desired_layout=NCHW \
@@ -168,12 +168,20 @@ jobs:
           -c riscv_gcc_rv32.name=riscv32-esp-elf \
           -c espidf.optimize=s \
           -c espidf.extra_cmake_defs="{'CONFIG_ENABLE_WIFI': 1}" \
-          --until COMPILE -v
+          -v
         
+        echo "Listing build outputs:"
         cd $GITHUB_WORKSPACE/mlonmcu/workspace_kws/temp/sessions/latest/runs
-        ls -a 
-        cd $GITHUB_WORKSPACE/mlonmcu/workspace_kws/temp/sessions/latest/runs/*/espidf/build
-        ls -a
+        ls -la
+        if [ -d */espidf/build ]; then
+          cd */espidf/build
+          echo "Firmware files:"
+          ls -lah *.bin *.elf 2>/dev/null || echo "No .bin/.elf files in build/"
+          ls -lah bootloader/bootloader.bin 2>/dev/null || echo "No bootloader"
+          ls -lah partition_table/partition-table.bin 2>/dev/null || echo "No partition table"
+        else
+          echo "ERROR: espidf/build directory not found!"
+        fi
     
     - name: Upload simulation results
       uses: actions/upload-artifact@v4
