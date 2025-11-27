@@ -151,6 +151,30 @@ jobs:
         python3 -c "import mlonmcu.setup.gen_requirements; print('OK')"
         python3 $GITHUB_WORKSPACE/run.py kws_1 --print simulate --core_model esp32c3
     
+    - name: Build ESP32 Firmware (no flashing)
+      shell: bash
+      run: |
+        source $GITHUB_WORKSPACE/mlonmcu/venv/bin/activate
+        cd /tmp
+        # Build firmware but stop before RUN stage (which attempts to flash)
+        python3 -m mlonmcu.cli.main flow run $GITHUB_WORKSPACE/target_sw/kws/kws_1/micro_kws_student_quantized.tflite \
+          --target esp32c3 --platform espidf \
+          -c espidf.print_outputs=1 -c esp32c3.print_outputs=1 -c run.export_optional=1 \
+          --backend tvmaotplus -c tvmaotplus.desired_layout=NCHW -c tvmaot.desired_layout=NCHW \
+          -f autotuned -c autotuned.results_file=$GITHUB_WORKSPACE/target_sw/kws/kws_1/autotune/micro_kws_student_tuning_log_nchw_best.txt \
+          -c espidf.project_template=$GITHUB_WORKSPACE/target_sw/app/micro_kws_esp32devboard_perf \
+          -c espidf.append_sdkconfig_defaults=1 \
+          -c riscv_gcc_rv32.install_dir=$MLONMCU_HOME/deps/install/espidf/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf \
+          -c riscv_gcc_rv32.name=riscv32-esp-elf \
+          -c espidf.optimize=s \
+          -c espidf.extra_cmake_defs="{'CONFIG_ENABLE_WIFI': 1}" \
+          --until COMPILE -v
+        
+        cd $GITHUB_WORKSPACE/mlonmcu/workspace_kws/temp/sessions/latest/runs
+        ls -a 
+        cd $GITHUB_WORKSPACE/mlonmcu/workspace_kws/temp/sessions/latest/runs/*/espidf/build
+        ls -a
+    
     - name: Upload simulation results
       uses: actions/upload-artifact@v4
       if: always()
@@ -160,3 +184,12 @@ jobs:
           mlonmcu/workspace_kws/temp/sessions/latest/report.csv
           mlonmcu/workspace_kws/temp/sessions/latest/*.log
         retention-days: 7
+    
+    - name: Upload ESP32 firmware binaries
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: esp32-firmware
+        path: |
+          mlonmcu/workspace_kws/temp/sessions/latest/runs/*/espidf/build/*.bin
+        retention-days: 30
