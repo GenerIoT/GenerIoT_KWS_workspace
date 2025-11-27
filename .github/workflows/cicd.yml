@@ -192,3 +192,105 @@ jobs:
         path: |
           mlonmcu/workspace_kws/temp/sessions/latest/runs/latest/espidf/build/*.bin
         retention-days: 30
+
+  bump-version:
+    runs-on: ubuntu-latest
+    needs: simulate-kws
+    outputs:
+      version: ${{ steps.set-version.outputs.VERSION }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Bump patch version
+      id: set-version
+      run: |
+        sudo apt-get update && sudo apt-get install -y jq
+        MAJOR=$(jq -r '.major' version.json)
+        MINOR=$(jq -r '.minor' version.json)
+        PATCH=$(jq -r '.patch' version.json)
+    
+        PATCH=$((PATCH+1))
+    
+        # Handle rollover: patch -> minor -> major
+        if [ "$PATCH" -gt 10 ]; then
+          PATCH=0
+          MINOR=$((MINOR+1))
+        fi
+    
+        if [ "$MINOR" -gt 10 ]; then
+          MINOR=0
+          MAJOR=$((MAJOR+1))
+        fi
+    
+        # Write back into version.json
+        jq \
+          --argjson major $MAJOR \
+          --argjson minor $MINOR \
+          --argjson patch $PATCH \
+          '{major:$major, minor:$minor, patch:$patch}' \
+          version.json > version.tmp && mv version.tmp version.json
+    
+        # Export version string
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Commit updated version.json
+      run: |
+        git config user.name "Hai Chu"
+        git config user.email "hai.m.chu@tuni.fi"
+        git add version.json
+        git commit -m "Bump version to ${{ steps.set-version.outputs.VERSION }} [skip ci]"
+        git push
+
+  create-upload-deploy-artifact:
+    runs-on: ubuntu-latest
+    needs: bump-version
+    container:
+      image: mendersoftware/mender-ci-tools:master
+    env:
+      MENDER_SERVER_URL: https://eu.hosted.mender.io
+      MENDER_API_TOKEN: ${{ secrets.MENDER_API_TOKEN }}
+      VERSION: ${{ needs.bump-version.outputs.version }}
+      APP_NAME: esp32c3-tumkws
+      DEVICE: esp32
+      DEVICE_TYPE: esp32c3-kws
+      DEVICE_GROUP: cicd-kws
+    steps:
+    - name: Download firmware artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: esp32-firmware
+        path: build
+
+    - name: List downloaded files
+      run: |
+        echo "Files in build directory:"
+        ls -laR build/
+
+    - name: Create Mender artifact
+      run: |
+        mender-artifact write module-image \
+          --artifact-name "${{env.APP_NAME}}-v${{ env.VERSION }}" \
+          --device-type "${{env.DEVICE_TYPE}}" \
+          --type "${{env.DEVICE}}" \
+          --file build/app.bin \
+          --output-path build/${APP_NAME}-v${VERSION}.mender
+
+    - name: Upload Mender Artifact to Mender server
+      uses: mendersoftware/mender-gh-action-upload-artifact@v1.0.0
+      with:
+        mender_pat: ${{ env.MENDER_API_TOKEN }}
+        mender_artifact: build/${{env.APP_NAME}}-v${{env.VERSION}}.mender
+        mender_uri: ${{ env.MENDER_SERVER_URL }}
+
+    - name: Create deployment
+      uses: mendersoftware/mender-gh-action-create-deployment@v1.0.0
+      with:
+        mender_pat: ${{ env.MENDER_API_TOKEN }}
+        mender_deployment_name: "${{env.APP_NAME}}-v${{env.VERSION}}-deployment"
+        mender_release_name: "${{env.APP_NAME}}-v${{env.VERSION}}"
+        mender_devices_group: ${{ env.DEVICE_GROUP }}
+        mender_uri: ${{ env.MENDER_SERVER_URL }}
