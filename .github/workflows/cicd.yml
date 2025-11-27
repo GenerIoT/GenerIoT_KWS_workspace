@@ -88,7 +88,9 @@ jobs:
       run: |
         source venv/bin/activate
         python3 -m mlonmcu.cli.main init -t kws workspace_kws --clone-models --non-interactive --allow-exists
-        echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
+    
+    - name: Set MLONMCU_HOME env
+      run: echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
 
     - name: Configure Git to use HTTPS with token
       run: |
@@ -106,6 +108,8 @@ jobs:
         echo "Running mlonmcu setup"
         python3 -m mlonmcu.cli.main setup -g
         python3 -m pip install -r $MLONMCU_HOME/requirements_addition.txt
+        
+        python3 -m mlonmcu.cli.main setup --task clone_etiss_perf -v
         python3 -m mlonmcu.cli.main setup --task clone_etiss_perf_plugin -v
         
         # Patch ETISS Channel.h for missing cstdint include
@@ -169,19 +173,6 @@ jobs:
           -c espidf.optimize=s \
           -c espidf.extra_cmake_defs="{'CONFIG_ENABLE_WIFI': 1}" \
           -v
-        
-        echo "Listing build outputs:"
-        cd $GITHUB_WORKSPACE/mlonmcu/workspace_kws/temp/sessions/latest/runs
-        ls -la
-        if [ -d */espidf/build ]; then
-          cd */espidf/build
-          echo "Firmware files:"
-          ls -lah *.bin *.elf 2>/dev/null || echo "No .bin/.elf files in build/"
-          ls -lah bootloader/bootloader.bin 2>/dev/null || echo "No bootloader"
-          ls -lah partition_table/partition-table.bin 2>/dev/null || echo "No partition table"
-        else
-          echo "ERROR: espidf/build directory not found!"
-        fi
     
     - name: Upload simulation results
       uses: actions/upload-artifact@v4
@@ -199,5 +190,5 @@ jobs:
       with:
         name: esp32-firmware
         path: |
-          mlonmcu/workspace_kws/temp/sessions/latest/runs/*/espidf/build/*.bin
+          mlonmcu/workspace_kws/temp/sessions/latest/runs/latest/espidf/build/*.bin
         retention-days: 30
