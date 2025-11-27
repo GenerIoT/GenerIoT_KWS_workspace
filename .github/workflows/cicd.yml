@@ -52,14 +52,24 @@ jobs:
           cmake \
           libzstd-dev
     
-    - name: Cache Python virtualenv with dependencies
+    - name: Cache MLonMCU workspace
+      id: cache-mlonmcu
+      uses: actions/cache@v4
+      with:
+        path: |
+          mlonmcu/workspace_kws
+        key: mlonmcu-workspace-${{ runner.os }}-${{ hashFiles('mlonmcu/requirements.txt', 'mlonmcu/setup.py', 'mlonmcu/mlonmcu/setup/tasks/*.py') }}
+        restore-keys: |
+          mlonmcu-workspace-${{ runner.os }}-
+    
+    - name: Cache Python virtualenv
       id: cache-venv
       uses: actions/cache@v4
       with:
         path: mlonmcu/venv
-        key: venv-${{ runner.os }}-v2-${{ hashFiles('mlonmcu/setup.py', 'mlonmcu/requirements*.txt') }}
+        key: venv-${{ runner.os }}-v1-${{ hashFiles('mlonmcu/setup.py', 'mlonmcu/requirements*.txt', 'mlonmcu/workspace_kws/requirements_addition.txt') }}
         restore-keys: |
-          venv-${{ runner.os }}-v2-
+          venv-${{ runner.os }}-v1-
     
     - name: Create MLonMCU virtualenv
       if: steps.cache-venv.outputs.cache-hit != 'true'
@@ -70,34 +80,13 @@ jobs:
         python3 -m venv venv
         source venv/bin/activate
         pip install -e .
-        echo "Venv created with all dependencies"
     
-    - name: Reinstall mlonmcu package in editable mode (fixes paths after cache)
+    - name: Reinstall mlonmcu in editable mode (fixes paths after cache restore)
       working-directory: mlonmcu
       shell: bash
       run: |
         source venv/bin/activate
         pip install -e . --no-deps
-        echo "Verifying critical dependencies:"
-        python3 -c "import mlonmcu; print(f'✓ mlonmcu: {mlonmcu.__file__}')" || {
-          echo "ERROR: mlonmcu import failed, reinstalling..."
-          pip install -e .
-        }
-        python3 -c "import tensorflow; print(f'✓ tensorflow: {tensorflow.__version__}')" || {
-          echo "WARNING: tensorflow missing, installing all dependencies..."
-          pip install -e .
-        }
-        python3 -c "import mlonmcu.setup.gen_requirements; print('✓ mlonmcu.setup accessible')"
-    
-    - name: Cache MLonMCU workspace
-      id: cache-mlonmcu
-      uses: actions/cache@v4
-      with:
-        path: |
-          mlonmcu/workspace_kws
-        key: mlonmcu-workspace-${{ runner.os }}-${{ hashFiles('mlonmcu/requirements.txt', 'mlonmcu/setup.py', 'mlonmcu/mlonmcu/setup/tasks/*.py') }}
-        restore-keys: |
-          mlonmcu-workspace-${{ runner.os }}-
           
     - name: Initialize MLonMCU workspace if cache missed
       if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
@@ -110,12 +99,22 @@ jobs:
     - name: Set MLONMCU_HOME env
       run: echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
 
+    - name: Cache MLonMCU dependencies (ETISS, toolchains, etc.)
+      id: cache-deps
+      uses: actions/cache@v4
+      with:
+        path: |
+          mlonmcu/workspace_kws/deps
+        key: mlonmcu-deps-${{ runner.os }}-v3-${{ hashFiles('mlonmcu/requirements.txt', 'mlonmcu/setup.py') }}
+        restore-keys: |
+          mlonmcu-deps-${{ runner.os }}-v3-
+          mlonmcu-deps-${{ runner.os }}-
     - name: Configure Git to use HTTPS with token
       run: |
         git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
     
     - name: Setup MLonMCU toolchain
-      if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
+      if: steps.cache-deps.outputs.cache-hit != 'true'
       working-directory: mlonmcu
       shell: bash
       run: |
@@ -126,8 +125,6 @@ jobs:
         echo "Running mlonmcu setup"
         python3 -m mlonmcu.cli.main setup -g
         python3 -m pip install -r $MLONMCU_HOME/requirements_addition.txt
-        
-        python3 -m mlonmcu.cli.main setup --task clone_etiss_perf -v
         python3 -m mlonmcu.cli.main setup --task clone_etiss_perf_plugin -v
         
         # Patch ETISS Channel.h for missing cstdint include
@@ -150,7 +147,19 @@ jobs:
         python3 -m mlonmcu.cli.main setup -v --progress -c cmake.use_system=true
         
         echo "Setup completed successfully!"
-
+    
+    - name: Install workspace dependencies (tensorflow, etc.)
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        source venv/bin/activate
+        if [ -f "$MLONMCU_HOME/requirements_addition.txt" ]; then
+          echo "Installing dependencies from requirements_addition.txt..."
+          pip install -r $MLONMCU_HOME/requirements_addition.txt
+        else
+          echo "Warning: requirements_addition.txt not found"
+        fi
+    
     - name: Run KWS Model Simulation
       shell: bash
       run: |
@@ -170,4 +179,3 @@ jobs:
           mlonmcu/workspace_kws/temp/sessions/latest/report.csv
           mlonmcu/workspace_kws/temp/sessions/latest/*.log
         retention-days: 7
-    
