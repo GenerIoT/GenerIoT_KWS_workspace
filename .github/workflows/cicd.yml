@@ -80,13 +80,6 @@ jobs:
         python3 -m venv venv
         source venv/bin/activate
         pip install -e .
-    
-    - name: Reinstall mlonmcu in editable mode (fixes paths after cache restore)
-      working-directory: mlonmcu
-      shell: bash
-      run: |
-        source venv/bin/activate
-        pip install -e . --no-deps
           
     - name: Initialize MLonMCU workspace if cache missed
       if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
@@ -95,26 +88,14 @@ jobs:
       run: |
         source venv/bin/activate
         python3 -m mlonmcu.cli.main init -t kws workspace_kws --clone-models --non-interactive --allow-exists
-        
-    - name: Set MLONMCU_HOME env
-      run: echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
+        echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
 
-    - name: Cache MLonMCU dependencies (ETISS, toolchains, etc.)
-      id: cache-deps
-      uses: actions/cache@v4
-      with:
-        path: |
-          mlonmcu/workspace_kws/deps
-        key: mlonmcu-deps-${{ runner.os }}-v3-${{ hashFiles('mlonmcu/requirements.txt', 'mlonmcu/setup.py') }}
-        restore-keys: |
-          mlonmcu-deps-${{ runner.os }}-v3-
-          mlonmcu-deps-${{ runner.os }}-
     - name: Configure Git to use HTTPS with token
       run: |
         git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
     
     - name: Setup MLonMCU toolchain
-      if: steps.cache-deps.outputs.cache-hit != 'true'
+      if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
       working-directory: mlonmcu
       shell: bash
       run: |
