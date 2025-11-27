@@ -4,6 +4,10 @@ on:
   push:
     branches: [ chore/setup-cicd ]
 
+permissions: 
+  actions: read 
+  contents: write
+
 jobs:
   simulate-kws:
     name: Build & Simulate KWS Model
