@@ -1,0 +1,300 @@
+name: KWS Workspace CI
+
+on:
+  push:
+    branches: [ main ]
+
+permissions: 
+  actions: read 
+  contents: write
+
+jobs:
+  simulate-kws:
+    name: Build & Simulate KWS Model
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Free up disk space
+      run: |
+        echo "Disk space before cleanup:"
+        df -h
+        
+        # Remove huge unnecessary tools to free up ~26GB
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/share/swift
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/.ghcup
+        sudo docker system prune -a -f
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo rm -rf /tmp/* /tmp/.* 2>/dev/null || true
+        
+        echo "Disk space after cleanup:"
+        df -h
+        
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.8"
+        cache: "pip"
+
+    - name: Install system dependencies (Boost, build essentials)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libboost-filesystem-dev \
+          libboost-system-dev \
+          libboost-program-options-dev \
+          build-essential \
+          ninja-build \
+          cmake \
+          libzstd-dev
+    
+    - name: Cache MLonMCU workspace
+      id: cache-mlonmcu
+      uses: actions/cache@v4
+      with:
+        path: |
+          mlonmcu/workspace_kws
+        key: mlonmcu-workspace-${{ runner.os }}-${{ hashFiles('mlonmcu/requirements.txt', 'mlonmcu/setup.py', 'mlonmcu/mlonmcu/setup/tasks/*.py') }}
+        restore-keys: |
+          mlonmcu-workspace-${{ runner.os }}-
+    
+    - name: Cache Python virtualenv
+      id: cache-venv
+      uses: actions/cache@v4
+      with:
+        path: mlonmcu/venv
+        key: venv-${{ runner.os }}-v1-${{ hashFiles('mlonmcu/setup.py', 'mlonmcu/requirements*.txt', 'mlonmcu/workspace_kws/requirements_addition.txt') }}
+        restore-keys: |
+          venv-${{ runner.os }}-v1-
+    
+    - name: Create MLonMCU virtualenv
+      if: steps.cache-venv.outputs.cache-hit != 'true'
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        echo "Setting up virtual environment..."
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install -e .
+          
+    - name: Initialize MLonMCU workspace if cache missed
+      if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        source venv/bin/activate
+        python3 -m mlonmcu.cli.main init -t kws workspace_kws --clone-models --non-interactive --allow-exists
+    
+    - name: Set MLONMCU_HOME env
+      run: echo "MLONMCU_HOME=$GITHUB_WORKSPACE/mlonmcu/workspace_kws" >> $GITHUB_ENV
+
+    - name: Configure Git to use HTTPS with token
+      run: |
+        git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+    
+    - name: Setup MLonMCU toolchain
+      if: steps.cache-mlonmcu.outputs.cache-hit != 'true'
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        source venv/bin/activate
+        
+        rm -f $MLONMCU_HOME/.deps_lock
+        
+        echo "Running mlonmcu setup"
+        python3 -m mlonmcu.cli.main setup -g
+        python3 -m pip install -r $MLONMCU_HOME/requirements_addition.txt
+        
+        python3 -m mlonmcu.cli.main setup --task clone_etiss_perf -v
+        python3 -m mlonmcu.cli.main setup --task clone_etiss_perf_plugin -v
+        
+        # Patch ETISS Channel.h for missing cstdint include
+        CHANNEL_H="$MLONMCU_HOME/deps/src/etiss_perf/PluginImpl/SoftwareEvalLib/libs/backends/include/api/softwareEval-backends/Channel.h"
+        if [ -f "$CHANNEL_H" ]; then
+          if ! grep -q "#include <cstdint>" "$CHANNEL_H"; then
+            echo "Patching Channel.h: adding missing #include <cstdint>"
+            sed -i '/#include <stdbool.h>/a #include <cstdint>' "$CHANNEL_H"
+          else
+            echo "Channel.h already patched"
+          fi
+        else
+          echo "Warning: Channel.h not found at expected location"
+          ls -la "$MLONMCU_HOME/deps/src/etiss_perf/PluginImpl/" || true
+        fi
+        
+        # Force removal of static libzstd to make CMake use shared library
+        sudo rm -f /usr/lib/x86_64-linux-gnu/libzstd.a
+        
+        python3 -m mlonmcu.cli.main setup -v --progress -c cmake.use_system=true
+        
+        echo "Setup completed successfully!"
+    
+    - name: Install workspace dependencies (tensorflow, etc.)
+      working-directory: mlonmcu
+      shell: bash
+      run: |
+        source venv/bin/activate
+        if [ -f "$MLONMCU_HOME/requirements_addition.txt" ]; then
+          echo "Installing dependencies from requirements_addition.txt..."
+          pip install -r $MLONMCU_HOME/requirements_addition.txt
+        else
+          echo "Warning: requirements_addition.txt not found"
+        fi
+    
+    - name: Run KWS Model Simulation
+      shell: bash
+      run: |
+        source $GITHUB_WORKSPACE/mlonmcu/venv/bin/activate
+        cd /tmp
+        echo "Testing mlonmcu import:"
+        python3 -c "import mlonmcu; print(f'mlonmcu: {mlonmcu.__file__}')"
+        python3 -c "import mlonmcu.setup.gen_requirements; print('OK')"
+        python3 $GITHUB_WORKSPACE/run.py kws_1 --print simulate --core_model esp32c3
+    
+    - name: Build ESP32 Firmware (no flashing)
+      shell: bash
+      run: |
+        source $GITHUB_WORKSPACE/mlonmcu/venv/bin/activate
+        cd /tmp
+        # Build firmware but stop at COMPILE stage (before RUN which attempts to flash)
+        python3 -m mlonmcu.cli.main flow compile $GITHUB_WORKSPACE/target_sw/kws/kws_1/micro_kws_student_quantized.tflite \
+          --target esp32c3 --platform espidf \
+          -c espidf.print_outputs=1 -c esp32c3.print_outputs=1 -c run.export_optional=1 \
+          --backend tvmaotplus -c tvmaotplus.desired_layout=NCHW -c tvmaot.desired_layout=NCHW \
+          -f autotuned -c autotuned.results_file=$GITHUB_WORKSPACE/target_sw/kws/kws_1/autotune/micro_kws_student_tuning_log_nchw_best.txt \
+          -c espidf.project_template=$GITHUB_WORKSPACE/target_sw/app/micro_kws_esp32devboard_perf \
+          -c espidf.append_sdkconfig_defaults=1 \
+          -c riscv_gcc_rv32.install_dir=$MLONMCU_HOME/deps/install/espidf/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf \
+          -c riscv_gcc_rv32.name=riscv32-esp-elf \
+          -c espidf.optimize=s \
+          -c espidf.extra_cmake_defs="{'CONFIG_ENABLE_WIFI': 1}" \
+          -v
+    
+    - name: Upload simulation results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: simulation-results
+        path: |
+          mlonmcu/workspace_kws/temp/sessions/latest/report.csv
+          mlonmcu/workspace_kws/temp/sessions/latest/*.log
+        retention-days: 7
+    
+    - name: Upload ESP32 firmware binaries
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: esp32-firmware
+        path: |
+          mlonmcu/workspace_kws/temp/sessions/latest/runs/latest/espidf/build/*.bin
+        retention-days: 30
+
+  bump-version:
+    runs-on: ubuntu-latest
+    needs: simulate-kws
+    outputs:
+      version: ${{ steps.set-version.outputs.VERSION }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Bump patch version
+      id: set-version
+      run: |
+        sudo apt-get update && sudo apt-get install -y jq
+        MAJOR=$(jq -r '.major' version.json)
+        MINOR=$(jq -r '.minor' version.json)
+        PATCH=$(jq -r '.patch' version.json)
+    
+        PATCH=$((PATCH+1))
+    
+        # Handle rollover: patch -> minor -> major
+        if [ "$PATCH" -gt 10 ]; then
+          PATCH=0
+          MINOR=$((MINOR+1))
+        fi
+    
+        if [ "$MINOR" -gt 10 ]; then
+          MINOR=0
+          MAJOR=$((MAJOR+1))
+        fi
+    
+        # Write back into version.json
+        jq \
+          --argjson major $MAJOR \
+          --argjson minor $MINOR \
+          --argjson patch $PATCH \
+          '{major:$major, minor:$minor, patch:$patch}' \
+          version.json > version.tmp && mv version.tmp version.json
+    
+        # Export version string
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Commit updated version.json
+      run: |
+        git config user.name "Hai Chu"
+        git config user.email "hai.m.chu@tuni.fi"
+        git add version.json
+        git commit -m "Bump version to ${{ steps.set-version.outputs.VERSION }} [skip ci]"
+        git push
+
+  create-upload-deploy-artifact:
+    runs-on: ubuntu-latest
+    needs: bump-version
+    container:
+      image: mendersoftware/mender-ci-tools:master
+    env:
+      MENDER_SERVER_URL: https://eu.hosted.mender.io
+      MENDER_API_TOKEN: ${{ secrets.MENDER_API_TOKEN }}
+      VERSION: ${{ needs.bump-version.outputs.version }}
+      APP_NAME: esp32c3-tumkws
+      DEVICE: esp32
+      DEVICE_TYPE: esp32c3-kws
+      DEVICE_GROUP: cicd-kws
+    steps:
+    - name: Download firmware artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: esp32-firmware
+        path: build
+
+    - name: List downloaded files
+      run: |
+        echo "Files in build directory:"
+        ls -laR build/
+
+    - name: Create Mender artifact
+      run: |
+        mender-artifact write module-image \
+          --artifact-name "${{env.APP_NAME}}-v${{ env.VERSION }}" \
+          --device-type "${{env.DEVICE_TYPE}}" \
+          --type "${{env.DEVICE}}" \
+          --file build/app.bin \
+          --output-path build/${APP_NAME}-v${VERSION}.mender
+
+    - name: Upload Mender Artifact to Mender server
+      uses: mendersoftware/mender-gh-action-upload-artifact@v1.0.0
+      with:
+        mender_pat: ${{ env.MENDER_API_TOKEN }}
+        mender_artifact: build/${{env.APP_NAME}}-v${{env.VERSION}}.mender
+        mender_uri: ${{ env.MENDER_SERVER_URL }}
+
+    - name: Create deployment
+      uses: mendersoftware/mender-gh-action-create-deployment@v1.0.0
+      with:
+        mender_pat: ${{ env.MENDER_API_TOKEN }}
+        mender_deployment_name: "${{env.APP_NAME}}-v${{env.VERSION}}-deployment"
+        mender_release_name: "${{env.APP_NAME}}-v${{env.VERSION}}"
+        mender_devices_group: ${{ env.DEVICE_GROUP }}
+        mender_uri: ${{ env.MENDER_SERVER_URL }}
