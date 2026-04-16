@@ -2,7 +2,7 @@ name: KWS Workspace CI
 
 on:
   push:
-    branches: [ chore/setup-cicd ]
+    branches: [ main ]
 
 permissions: 
   actions: read 
